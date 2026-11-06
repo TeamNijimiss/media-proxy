@@ -7,6 +7,7 @@ on:
     tags:
       - '**'
   workflow_dispatch:
+  pull_request:
 
 permissions:
   contents: read
@@ -17,10 +18,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: git diff --exit-code -- built
+
   push_to_registry:
+    needs: verify
     name: Push Docker image to GitHub Container Registry
     runs-on: ubuntu-latest
-    if: github.repository == 'MisskeyIO/media-proxy'
+    if: github.repository == 'TeamNijimiss/media-proxy' && github.event_name != 'pull_request'
     steps:
       - name: Check out the repo
         uses: actions/checkout@v6
@@ -35,16 +54,17 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/misskeyio/media-proxy
+          images: ghcr.io/teamnijimiss/media-proxy
+          tags: |
+            type=raw,value=latest
+            type=ref,event=branch
+            type=ref,event=tag
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Prepare image tags
-        run: |
-          echo "FORMATTED_BRANCH_NAME=$(echo ${{ github.ref_name }} | sed -e 's/\//-/g' )" >> $GITHUB_ENV
       - name: Build and Push to GitHub Container Registry
         uses: docker/build-push-action@v6
         with:
@@ -53,7 +73,5 @@ jobs:
           push: true
           platforms: ${{ steps.buildx.outputs.platforms }}
           provenance: false
-          labels: ${{ env.FORMATTED_BRANCH_NAME }}
-          tags: |
-            ghcr.io/misskeyio/media-proxy:latest
-            ghcr.io/misskeyio/media-proxy:${{ env.FORMATTED_BRANCH_NAME }}
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}

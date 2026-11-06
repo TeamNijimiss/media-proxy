@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: syuilo and misskey-project
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as https from 'node:https';
@@ -17,6 +22,7 @@ import { StatusError } from './status-error.js';
 import { DownloadConfig, defaultDownloadConfig, downloadUrl } from './download.js';
 import { getAgents } from './http.js';
 import _contentDisposition from 'content-disposition';
+import { correctFilename } from './correct-filename.js';
 
 EventEmitter.defaultMaxListeners = 25;
 
@@ -40,15 +46,11 @@ export type MediaProxyOptions = {
 });
 
 interface RequestParams {
-    type: string;
+    type?: string;
     url: string;
 }
 
-interface RequestParamsForBackwardCompatibility {
-    filename: string;
-}
-
-interface RequestQueryForBackwardCompatibility {
+interface RequestQuery extends TransformQuery {
     url?: string;
 }
 
@@ -95,11 +97,12 @@ export function setMediaProxyConfig(setting?: MediaProxyOptions | null) {
 }
 
 export default function (fastify: FastifyInstance, options: MediaProxyOptions | null | undefined, done: (err?: Error) => void) {
+    fastifyLogger.log = fastify.log;
     setMediaProxyConfig(options);
 
-    const corsOrigin = options!['Access-Control-Allow-Origin'] ?? '*';
-    const corsHeader = options!['Access-Control-Allow-Headers'] ?? '*';
-    const csp = options!['Content-Security-Policy'] ?? `default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'`;
+    const corsOrigin = options?.['Access-Control-Allow-Origin'] ?? '*';
+    const corsHeader = options?.['Access-Control-Allow-Headers'] ?? '*';
+    const csp = options?.['Content-Security-Policy'] ?? `default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'`;
 
     fastify.addHook('onRequest', (request, reply, done) => {
         reply.header('Access-Control-Allow-Origin', corsOrigin);
@@ -112,20 +115,21 @@ export default function (fastify: FastifyInstance, options: MediaProxyOptions | 
     fastify.register(fastifyStatic, {
         root: _dirname,
         serve: false,
+        cacheControl: false,
     });
 
     fastify.get<{
         Params: RequestParams;
-        Querystring: TransformQuery;
+        Querystring: RequestQuery;
     }>('/:type/:url', async (request, reply) => {
         return await proxyHandler(request, reply)
             .catch(err => errorHandler(request, reply, err));
     });
 
     fastify.get<{
-        Params: RequestParamsForBackwardCompatibility;
-        Querystring: RequestQueryForBackwardCompatibility & TransformQuery;
-    }>('/:filename', async (request, reply) => {
+        Params: RequestParams;
+        Querystring: RequestQuery;
+    }>('/:url', async (request, reply) => {
         return await proxyHandler(request, reply)
             .catch(err => errorHandler(request, reply, err));
     });
@@ -143,21 +147,20 @@ function errorHandler(request: FastifyRequest<{ Params?: { [x: string]: any }; Q
     }
 
     if (err instanceof StatusError && (err.statusCode === 302 || err.isClientError)) {
-        return reply.send(err);
-    } else {
-        return reply.code(500).send(err as Error);
+        return reply.code(err.statusCode).send();
     }
+
+    return reply.code(500).send();
 }
 
 async function proxyHandler(request: FastifyRequest<{
-    Params: RequestParams | RequestParamsForBackwardCompatibility;
-    Querystring: TransformQuery | RequestQueryForBackwardCompatibility & TransformQuery;
+    Params: RequestParams;
+    Querystring: RequestQuery;
 }>, reply: FastifyReply) {
-    let url: string | undefined = undefined;
-    if ('type' in request.params && 'url' in request.params) {
-        url = request.params.url;
-    } else if ('url' in request.query) {
-        url = request.query.url;
+    // Match Nijimiss: a non-empty query URL takes precedence over the path.
+    let url = request.query.url || request.params.url;
+    if (typeof url !== 'string' || !url) {
+        return reply.code(400).send();
     }
 
     // noinspection HttpUrlsUsage
@@ -168,8 +171,10 @@ async function proxyHandler(request: FastifyRequest<{
         url = 'https://' + url;
     }
 
-    if (!url) {
-        return reply.code(400).send({ error: 'Bad Request', message: 'URL is required' });
+    if (!request.headers['user-agent']) {
+        throw new StatusError('User-Agent is required', 400, 'User-Agent is required');
+    } else if (request.headers['user-agent'].toLowerCase().includes('misskey/')) {
+        throw new StatusError('Refusing to proxy a request from another proxy', 403, 'Proxy is recursive');
     }
 
     const transformQuery = request.query as TransformQuery;
@@ -254,7 +259,7 @@ async function proxyHandler(request: FastifyRequest<{
             };
         } else if (file.mime === 'image/svg+xml') {
             image = convertToWebpStream(file.path, 2048, 2048);
-        } else if (!file.mime.startsWith('image/') && !FILE_TYPE_BROWSERSAFE.includes(file.mime)) {
+        } else if (!file.mime.startsWith('image/') || !FILE_TYPE_BROWSERSAFE.includes(file.mime)) {
             throw new StatusError('Rejected type', 403, 'Rejected type');
         }
 
@@ -309,26 +314,12 @@ async function downloadAndDetectTypeFromUrl(url: string): Promise<
             state: 'remote',
             mime, ext,
             path, cleanup,
-            filename: correctFilename(filename, ext),
+            filename,
         }
     } catch (e) {
         cleanup();
         throw e;
     }
-}
-
-function correctFilename(filename: string, ext: string | null) {
-    const dotExt = ext ? `.${ext}` : '.unknown';
-    if (filename.endsWith(dotExt)) {
-        return filename;
-    }
-    if (ext === 'jpg' && filename.endsWith('.jpeg')) {
-        return filename;
-    }
-    if (ext === 'tif' && filename.endsWith('.tiff')) {
-        return filename;
-    }
-    return `${filename}${dotExt}`;
 }
 
 function contentDisposition(type: 'inline' | 'attachment', filename: string): string {

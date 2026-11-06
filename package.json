@@ -1,7 +1,7 @@
 {
   "name": "misskey-media-proxy",
-  "version": "0.0.25",
-  "description": "The Media Proxy for Misskey",
+  "version": "0.0.25-nijimiss.1",
+  "description": "Standalone media proxy aligned with Nijimiss",
   "main": "built/index.js",
   "type": "module",
   "files": [
@@ -11,20 +11,21 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test test/*.test.mjs",
     "start": "node ./server.mjs",
     "restart": "pnpm build && pnpm start",
     "dev": "nodemon -w src -e ts,js,mjs,cjs,json --exec \"cross-env NODE_ENV=development pnpm run restart\""
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/misskey-dev/media-proxy.git"
+    "url": "git+https://github.com/TeamNijimiss/media-proxy.git"
   },
   "author": "syuilo, tamaina",
-  "license": "AGPL-3.0-or-later",
+  "license": "AGPL-3.0-only",
   "bugs": {
-    "url": "https://github.com/misskey-dev/media-proxy/issues"
+    "url": "https://github.com/TeamNijimiss/media-proxy/issues"
   },
-  "homepage": "https://github.com/misskey-dev/media-proxy#readme",
+  "homepage": "https://github.com/TeamNijimiss/media-proxy#readme",
   "engines": {
     "node": ">=20.0.0"
   },
@@ -44,8 +45,8 @@
     "cacheable-lookup": "7.0.0",
     "close-with-grace": "2.4.0",
     "content-disposition": "1.0.1",
-    "fastify": "5.6.2",
-    "file-type": "21.3.0",
+    "fastify": "5.8.2",
+    "file-type": "21.3.3",
     "got": "14.6.6",
     "hpagent": "1.2.0",
     "ip-cidr": "4.0.2",

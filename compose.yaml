@@ -1,0 +1,16 @@
+services:
+  media-proxy:
+    build: .
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+    ports:
+      - '127.0.0.1:3000:3000'
+    volumes:
+      - type: bind
+        source: ./config.js
+        target: /app/config.js
+        read_only: true
+        bind:
+          create_host_path: false

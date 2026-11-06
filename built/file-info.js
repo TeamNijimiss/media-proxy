@@ -26,9 +26,6 @@ export async function detectType(path) {
         if (type.mime === 'application/xml' && await checkSvg(path)) {
             return TYPE_SVG;
         }
-        if (!isMimeImage(type.mime, 'safe-file')) {
-            return TYPE_OCTET_STREAM;
-        }
         return {
             mime: fixMime(type.mime),
             ext: type.ext,
@@ -55,8 +52,8 @@ async function checkSvg(path) {
 import { FILE_TYPE_BROWSERSAFE } from './const.js';
 const dictionary = {
     'safe-file': FILE_TYPE_BROWSERSAFE,
-    'sharp-convertible-image': ['image/jpeg', 'image/png', 'image/gif', 'image/apng', 'image/vnd.mozilla.apng', 'image/webp', 'image/avif', 'image/svg+xml', 'image/x-icon', 'image/bmp'],
-    'sharp-animation-convertible-image': ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'image/svg+xml', 'image/x-icon', 'image/bmp'],
+    'sharp-convertible-image': ['image/jpeg', 'image/tiff', 'image/png', 'image/gif', 'image/apng', 'image/vnd.mozilla.apng', 'image/webp', 'image/avif', 'image/svg+xml', 'image/x-icon', 'image/bmp'],
+    'sharp-animation-convertible-image': ['image/jpeg', 'image/tiff', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'image/svg+xml', 'image/x-icon', 'image/bmp'],
 };
 export const isMimeImage = (mime, type) => dictionary[type].includes(mime);
 function fixMime(mime) {

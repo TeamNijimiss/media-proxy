@@ -7,6 +7,7 @@ export const webpDefault = {
     smartSubsample: true,
     mixed: true,
     effort: 2,
+    loop: 0,
 };
 export function convertToWebpStream(path, width, height, options = webpDefault) {
     return convertSharpToWebpStream(sharp(path), width, height, options);

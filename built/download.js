@@ -20,7 +20,7 @@ export async function downloadUrl(url, path, settings = defaultDownloadConfig) {
     const timeout = 30 * 1000;
     const operationTimeout = 60 * 1000;
     const urlObj = new URL(url);
-    let filename = urlObj.pathname.split('/').pop() ?? 'unknown';
+    let filename = urlObj.pathname.split('/').pop() ?? 'untitled';
     const req = got.stream(url, {
         headers: {
             'User-Agent': settings.userAgent,
@@ -38,7 +38,7 @@ export async function downloadUrl(url, path, settings = defaultDownloadConfig) {
             http: settings.httpAgent,
             https: settings.httpsAgent,
         },
-        http2: true,
+        http2: false,
         retry: {
             limit: 0,
         },

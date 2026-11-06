@@ -39,7 +39,7 @@ export async function downloadUrl(url: string, path: string, settings:DownloadCo
     const operationTimeout = 60 * 1000;
 
     const urlObj = new URL(url);
-    let filename = urlObj.pathname.split('/').pop() ?? 'unknown';
+    let filename = urlObj.pathname.split('/').pop() ?? 'untitled';
 
     const req = got.stream(url, {
         headers: {
@@ -58,7 +58,7 @@ export async function downloadUrl(url: string, path: string, settings:DownloadCo
             http: settings.httpAgent,
             https: settings.httpsAgent,
         },
-        http2: true,
+        http2: false,
         retry: {
             limit: 0,
         },

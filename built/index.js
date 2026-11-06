@@ -1,3 +1,7 @@
+/*
+ * SPDX-FileCopyrightText: syuilo and misskey-project
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
 import * as fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
@@ -14,6 +18,7 @@ import { StatusError } from './status-error.js';
 import { defaultDownloadConfig, downloadUrl } from './download.js';
 import { getAgents } from './http.js';
 import _contentDisposition from 'content-disposition';
+import { correctFilename } from './correct-filename.js';
 EventEmitter.defaultMaxListeners = 25;
 const _filename = fileURLToPath(import.meta.url);
 const _dirname = dirname(_filename);
@@ -46,10 +51,11 @@ export function setMediaProxyConfig(setting) {
     fastifyLogger.log.info(config);
 }
 export default function (fastify, options, done) {
+    fastifyLogger.log = fastify.log;
     setMediaProxyConfig(options);
-    const corsOrigin = options['Access-Control-Allow-Origin'] ?? '*';
-    const corsHeader = options['Access-Control-Allow-Headers'] ?? '*';
-    const csp = options['Content-Security-Policy'] ?? `default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'`;
+    const corsOrigin = options?.['Access-Control-Allow-Origin'] ?? '*';
+    const corsHeader = options?.['Access-Control-Allow-Headers'] ?? '*';
+    const csp = options?.['Content-Security-Policy'] ?? `default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'`;
     fastify.addHook('onRequest', (request, reply, done) => {
         reply.header('Access-Control-Allow-Origin', corsOrigin);
         reply.header('Access-Control-Allow-Headers', corsHeader);
@@ -60,12 +66,13 @@ export default function (fastify, options, done) {
     fastify.register(fastifyStatic, {
         root: _dirname,
         serve: false,
+        cacheControl: false,
     });
     fastify.get('/:type/:url', async (request, reply) => {
         return await proxyHandler(request, reply)
             .catch(err => errorHandler(request, reply, err));
     });
-    fastify.get('/:filename', async (request, reply) => {
+    fastify.get('/:url', async (request, reply) => {
         return await proxyHandler(request, reply)
             .catch(err => errorHandler(request, reply, err));
     });
@@ -78,19 +85,15 @@ function errorHandler(request, reply, err) {
         return reply.sendFile('/dummy.png', assets);
     }
     if (err instanceof StatusError && (err.statusCode === 302 || err.isClientError)) {
-        return reply.send(err);
+        return reply.code(err.statusCode).send();
     }
-    else {
-        return reply.code(500).send(err);
-    }
+    return reply.code(500).send();
 }
 async function proxyHandler(request, reply) {
-    let url = undefined;
-    if ('type' in request.params && 'url' in request.params) {
-        url = request.params.url;
-    }
-    else if ('url' in request.query) {
-        url = request.query.url;
+    // Match Nijimiss: a non-empty query URL takes precedence over the path.
+    let url = request.query.url || request.params.url;
+    if (typeof url !== 'string' || !url) {
+        return reply.code(400).send();
     }
     // noinspection HttpUrlsUsage
     if (url
@@ -98,8 +101,11 @@ async function proxyHandler(request, reply) {
         && !url.startsWith('https://')) {
         url = 'https://' + url;
     }
-    if (!url) {
-        return reply.code(400).send({ error: 'Bad Request', message: 'URL is required' });
+    if (!request.headers['user-agent']) {
+        throw new StatusError('User-Agent is required', 400, 'User-Agent is required');
+    }
+    else if (request.headers['user-agent'].toLowerCase().includes('misskey/')) {
+        throw new StatusError('Refusing to proxy a request from another proxy', 403, 'Proxy is recursive');
     }
     const transformQuery = request.query;
     // Create temp file
@@ -177,7 +183,7 @@ async function proxyHandler(request, reply) {
         else if (file.mime === 'image/svg+xml') {
             image = convertToWebpStream(file.path, 2048, 2048);
         }
-        else if (!file.mime.startsWith('image/') && !FILE_TYPE_BROWSERSAFE.includes(file.mime)) {
+        else if (!file.mime.startsWith('image/') || !FILE_TYPE_BROWSERSAFE.includes(file.mime)) {
             throw new StatusError('Rejected type', 403, 'Rejected type');
         }
         if (!image) {
@@ -222,26 +228,13 @@ async function downloadAndDetectTypeFromUrl(url) {
             state: 'remote',
             mime, ext,
             path, cleanup,
-            filename: correctFilename(filename, ext),
+            filename,
         };
     }
     catch (e) {
         cleanup();
         throw e;
     }
-}
-function correctFilename(filename, ext) {
-    const dotExt = ext ? `.${ext}` : '.unknown';
-    if (filename.endsWith(dotExt)) {
-        return filename;
-    }
-    if (ext === 'jpg' && filename.endsWith('.jpeg')) {
-        return filename;
-    }
-    if (ext === 'tif' && filename.endsWith('.tiff')) {
-        return filename;
-    }
-    return `${filename}${dotExt}`;
 }
 function contentDisposition(type, filename) {
     const fallback = filename.replace(/[^\w.-]/g, '_');

@@ -1,87 +1,29 @@
-# Misskeyメディアプロキシ仕様書
+# Nijimiss互換差分
 
-## メディアプロキシの種類と目的
-Misskeyメディアプロキシは、リモートのファイルをインスタンス管理者が管理するドメインでプロキシ配信し、また、縮小・加工された画像を提供するためのアプリケーションである。
+比較基準はNijimiss `13fa15e96a8a49f4206f81f4d81bdfc3ea2e9d31`、ベースはMisskeyIO/media-proxy `a09c469186f7806a28d8843e22cbe719a76c2557`。URLと起動方法、互換対象外の処理は[README](./README.md)を参照。
 
-Misskeyサーバー本体の/proxy/で提供されている「本体メディアプロキシ (local media proxy)」と、[github.com/misskey-dev/media-proxy](https://github.com/misskey-dev/media-proxy)で配布されている「外部メディアプロキシ (external media proxy)」がある。
+| 対象 | IO版からの変更 |
+| --- | --- |
+| 元URL | 空でない `url` クエリ → パスの順にする。単一セグメントも元URLとして扱う |
+| 入力形式 | NijimissのBMP/ICOを含む変換MIME一覧と同じ内容にし、TIFFを追加 |
+| MIME検出 | 判定段階の許可形式フィルタを外し、配信・変換段階で許可判定 |
+| 無変換 | `image/*` かつブラウザセーフな形式だけ配信。音声・動画などは403 |
+| WebP | Nijimissと同じ `loop: 0` を明示。他の既存パラメーターも維持 |
+| User-Agent | 未指定を400、大小文字を問わず `Misskey/` を含む要求を403 |
+| エラー | 302・4xxは元のステータス、それ以外は500。本文は空 |
+| fallback | 成功扱いの代替PNG。静的ファイル送信側の自動上書きを止め、指定の300秒キャッシュを保持 |
+| ファイル名 | NijimissのcorrectFilenameを移植し、最終形式に一度だけ適用 |
+| ダウンロード | Nijimissと同じくHTTP/2を無効化。サイズ上限・タイムアウトは維持 |
+| 依存バージョン | Sharp、BMP reader、Fastify、file-typeを基準と同じ版にする |
 
-外部メディアプロキシを設定・使用することで、本体のサーバー負荷を軽減できる。また、複数のインスタンスで外部プロキシを共用すると、さらなる負荷軽減が期待できる。
+本体だけが持つDB・内部ストレージ情報は再現しません。本体側の私設ネットワーク例外も自動で持ち込まず、外部プロキシ自身の明示設定を使用します。
 
-## 外部メディアプロキシの設定と使用
-外部メディアプロキシを設定するには、[README.md](./README.md)に記載されている通りインストールする。
+上流追従時は次を比較し、HTTPと画像のテストを更新してください。
 
-外部メディアプロキシが設定されている場合、本体メディアプロキシは外部メディアプロキシへ301リダイレクトを返答する（originクエリが指定されている場合を除く）。
-
-Misskeyサーバーのapi/metaの応答に、使用するべきメディアプロキシのURLを示す`mediaProxy`プロパティが存在する。  
-外部メディアプロキシが指定されているならそのURLが、指定されていなければ本体メディアプロキシ(/proxy/)のURLが入っている。  
-本体メディアプロキシはリダイレクトを行うものの、Misskeyクライアントは`mediaProxy`の値に応じて適切なメディアプロキシへ直接要求を行うべきである。
-
-メディアプロキシへは、クエリ文字列によって命令を行う。
-
-~~拡張子によってキャッシュの挙動を変えるCDNがあるため、image.webp、avatar.webp、static.webpなどの適当なファイル名を付加するべきである。~~  
-例:  
-~~`https://example.com/proxy/image.webp?url=https%3A%2F%2F......`~~  
-`https://example.com/proxy/image/https%3A%2F%2F......`
-
-Acceptヘッダーは無視される。  
-Cache-Controlは、正常なレスポンスの場合`max-age=31536000, immutable`、エラーレスポンスの場合`max-age=300`である。  
-Content-Typeは、ファイルの内容について適切なものが挿入される。
-Content-Security-Policyは、`default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'`となっている。
-Content-Dispositionは、filenameは元画像のContent-Disposition.filenameもしくはファイル名に基づいて挿入される。拡張子は適宜変更され、octet-streamの場合は拡張子として.unknownが付加される。inlineが指定される。
-
-### クエリの一覧
-#### url (deprecated)
-変換ないしはプロキシを行う対象の、元画像のURLを指定する。  
-指定がなかった場合はHTTPコード400が返される。
-
-https://www.google.com/images/errors/robot.png をプロキシする場合:  
-~~`https://example.com/proxy/image.webp?url=https%3A%2F%2Fwww.google.com%2Fimages%2Ferrors%2Frobot.png`~~  
-`https://example.com/proxy/image/https%3A%2F%2Fwww.google.com%2Fimages%2Ferrors%2Frobot.png`
-
-#### origin (本体のみ)
-存在すると、外部メディアプロキシへのリダイレクトを行わない。
-
-`https://example.com/proxy/image.webp?url=https%3A%2F%2F...&origin=1`
-
-「存在すると」というのは、Fastifyで`'origin' in request.query`がtureになる場合という意味である。以下同様。
-
-#### fallback
-存在すると、元画像に到達できなかったり画像の変換中にエラーが起きたりした場合、正常なレスポンス（Cache-Controlは`max-age=300`）としてフォールバック画像（カラーバー）が表示される。
-
-#### 変換クエリが存在しない場合の挙動
-次の項目からは変換形式を指定するクエリとなっている。
-
-変換形式が指定されていなかった場合は、画像ファイルもしくは許可されたファイル（FILE_TYPE_BROWSERSAFE）である場合のみプロキシ（ファイルの再配信）が行われる。  
-ただし、svgは、webpに変換される（最大サイズ2048x2048）。
-
-#### 変換クエリ付加時の挙動
-一方、以下の変換クエリが指定されているが、元ファイルがsharp.jsで変換できない形式の場合、404が返される。
-
-#### emoji
-存在すると、高さ128px以下のwebpが応答される。  
-ただし、sharp.jsの都合により、元画像がapngの場合は無変換で応答される。
-
-`https://example.com/proxy/emoji.webp?url=https%3A%2F%2F...&emoji=1`
-
-「以下」というのは、元画像がこれ未満だった場合は拡大を行わないという意味である。以下同様。
-
-#### avatar
-存在すると、高さ320px以下のwebpが応答される。  
-ただし、sharp.jsの都合により、元画像がapngの場合は無変換で応答される。
-
-`https://example.com/proxy/avatar.webp?url=https%3A%2F%2F...&avatar=1`
-
-#### static
-存在すると、アニメーション画像では最初のフレームのみの静止画のwebpが応答される。
-
-emojiまたはavatarとstaticが同時に指定された場合は、それぞれに応じた高さが、指定されていない場合は幅498px・高さ422pxに収まるサイズ以下に縮小される。
-
-#### preview
-存在すると、幅200px・高さ200pxに収まるサイズ以下のwebpが応答される。
-
-#### badge
-Webプッシュ通知のバッジに適したpngが応答される。
-
-https://developer.mozilla.org/ja/docs/Web/API/Notification/badge
-
-サイズは96x96で、元画像がアルファチャンネルのみで表現される。
+- `packages/backend/src/server/FileServerService.ts` のproxyHandlerとerrorHandler
+- `packages/backend/src/core/ImageProcessingService.ts`
+- `packages/backend/src/misc/is-mime-image.ts`
+- `packages/backend/src/misc/correct-filename.ts`
+- `packages/backend/src/core/FileInfoService.ts` のdetectType
+- `packages/backend/src/core/DownloadService.ts`
+- `pnpm-workspace.yaml` の画像・HTTP関連のバージョン
